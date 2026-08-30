@@ -8,6 +8,7 @@ COPY pyproject.toml ./
 COPY common ./common
 COPY services ./services
 COPY scripts ./scripts
+COPY bench ./bench
 
 RUN pip install --no-cache-dir .
 

@@ -1,4 +1,4 @@
-.PHONY: up down logs restart psql produce test lint build
+.PHONY: up down logs restart psql produce test lint build bench load chaos
 
 up:
 	docker compose up -d --build
@@ -25,4 +25,17 @@ test:
 	pytest tests/unit -v
 
 lint:
-	ruff check common services tests
+	ruff check common services tests bench scripts
+
+RATES ?= 1000,2000,5000
+STEP ?= 30
+
+bench:
+	python -m bench.bench_parser
+	docker compose run --rm indexer python -m bench.bench_write_strategies
+
+load:
+	docker compose run --rm producer python -m bench.load_test --rates $(RATES) --step-duration $(STEP)
+
+chaos:
+	pytest tests/load -v -s
