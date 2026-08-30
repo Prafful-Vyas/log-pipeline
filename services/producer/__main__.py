@@ -10,6 +10,7 @@ from aiokafka import AIOKafkaProducer
 
 from common.config import settings
 from common.logging import configure_logging
+from common.metrics import producer_events_total, start_metrics_server
 from common.serde import encode_log_event
 from services.producer.generator import PROFILES, build_event, default_states
 from services.producer.rate_limiter import TokenBucket
@@ -46,18 +47,21 @@ async def emit_loop(
         for _ in range(CHUNK):
             profile = random.choices(profiles, weights=weights, k=1)[0]
             state = states[profile.name]
-            event = build_event(profile, state)
-            if event is None:
+            built = build_event(profile, state)
+            if built is None:
                 continue
+            event, level = built
             payload = encode_log_event(event)
             producer.send(topic, value=payload, key=event.service.encode())
             stats["sent"] += 1
+            producer_events_total.labels(service=event.service, level=level).inc()
 
 
-async def send_injected(producer: AIOKafkaProducer, topic: str, stats: dict, event) -> None:
+async def send_injected(producer: AIOKafkaProducer, topic: str, stats: dict, event, level: str) -> None:
     payload = encode_log_event(event)
     producer.send(topic, value=payload, key=event.service.encode())
     stats["sent"] += 1
+    producer_events_total.labels(service=event.service, level=level).inc()
 
 
 async def stats_loop(stats: dict) -> None:
@@ -92,6 +96,7 @@ async def main() -> None:
         enable_idempotence=False,
     )
     await producer.start()
+    start_metrics_server(settings.metrics_port)
     log.info(
         "producer_starting",
         rate=args.rate,

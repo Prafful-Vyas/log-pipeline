@@ -11,6 +11,7 @@ dependencies = [
     "orjson>=3.10.0",
     "structlog>=24.1.0",
     "uuid6>=2024.1.12",
+    "prometheus-client>=0.20.0",
 ]
 
 [project.optional-dependencies]

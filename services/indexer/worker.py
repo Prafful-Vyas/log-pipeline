@@ -22,7 +22,18 @@ except ImportError:  # older aiokafka: fall back to plain sticky assignment
     )
 
 from common.config import settings
-from common.models import LogEvent, ParsedLog, SecurityAlert, normalize_level
+from common.metrics import (
+    consumer_dlq_total,
+    consumer_events_total,
+    consumer_lag_records,
+    consumer_parse_failures_total,
+    consumer_paused,
+    parse_duration_seconds,
+    queue_depth,
+    rebalances_total,
+    security_alerts_total,
+)
+from common.models import LogEvent, ParsedLog, ParseStatus, SecurityAlert, normalize_level
 from common.serde import decode_log_event, encode_security_alert
 from services.indexer.batcher import Batcher, QueueItem
 from services.indexer.classifier import Classifier
@@ -61,7 +72,11 @@ async def _build_parsed(
     security_producer: AIOKafkaProducer,
 ) -> tuple[ParsedLog, list[SecurityAlert]]:
     ingested_at = datetime.now(UTC)
+    parse_start = time.monotonic()
     fields, status = parse(envelope.raw, ingested_at)
+    parse_duration_seconds.labels(format=envelope.format).observe(time.monotonic() - parse_start)
+    if status == ParseStatus.FAILED:
+        consumer_parse_failures_total.labels(format=envelope.format).inc()
 
     parsed = ParsedLog(
         event_id=envelope.event_id,
@@ -94,6 +109,7 @@ async def _build_parsed(
                 client_ip=parsed.client_ip, user_id=parsed.user_id, detail=hit.detail,
             )
             alerts.append(alert)
+            security_alerts_total.labels(rule_id=hit.rule_id, severity=str(hit.severity)).inc()
             # Produced to logs.security BEFORE the offset commit (which only
             # happens later, after the batch containing this record flushes).
             await security_producer.send_and_wait(
@@ -127,23 +143,28 @@ async def fetch_loop(
             await write_dead_letter(pg_pool, msg.topic, msg.partition, msg.offset, msg.value, str(e))
             dlq_producer.send(settings.topic_dlq, value=msg.value)
             await queue.put((None, [], tp, msg.offset))
+            consumer_dlq_total.labels(reason="envelope_decode_failed").inc()
         else:
             parsed, alerts = await _build_parsed(envelope, classifier, security_producer)
             await queue.put((parsed, alerts, tp, msg.offset))
             counters["processed"] += 1
+            consumer_events_total.labels(worker=str(worker_id), service=envelope.service).inc()
 
+        queue_depth.labels(worker=str(worker_id)).set(queue.qsize())
         if queue.qsize() >= queue.maxsize:
             if full_since is None:
                 full_since = time.monotonic()
             elif not paused and time.monotonic() - full_since > 0.5:
                 consumer.pause(*consumer.assignment())
                 paused = True
+                consumer_paused.labels(worker=str(worker_id)).set(1)
                 log.warning("backpressure_pause", worker=worker_id)
         else:
             full_since = None
             if paused and queue.qsize() < queue.maxsize * 0.5:
                 consumer.resume(*consumer.assignment())
                 paused = False
+                consumer_paused.labels(worker=str(worker_id)).set(0)
                 log.info("backpressure_resume", worker=worker_id)
 
 
@@ -154,6 +175,7 @@ class RebalanceListener(ConsumerRebalanceListener):
 
     async def on_partitions_revoked(self, revoked) -> None:
         log.info("partitions_revoked", partitions=[str(tp) for tp in revoked])
+        rebalances_total.inc()
         try:
             await self._batcher.flush(self._consumer)
         except Exception:
@@ -163,7 +185,9 @@ class RebalanceListener(ConsumerRebalanceListener):
         log.info("partitions_assigned", partitions=[str(tp) for tp in assigned])
 
 
-async def stats_loop(worker_id: int, queue: asyncio.Queue, counters: dict) -> None:
+async def stats_loop(
+    worker_id: int, queue: asyncio.Queue, counters: dict, consumer: AIOKafkaConsumer
+) -> None:
     last = 0
     while True:
         await asyncio.sleep(10)
@@ -173,6 +197,17 @@ async def stats_loop(worker_id: int, queue: asyncio.Queue, counters: dict) -> No
             eps_last_10s=(total - last) / 10.0, queue_depth=queue.qsize(),
         )
         last = total
+
+        assignment = consumer.assignment()
+        if assignment:
+            try:
+                end_offsets = await consumer.end_offsets(assignment)
+                for tp in assignment:
+                    position = await consumer.position(tp)
+                    lag = max(0, end_offsets[tp] - position)
+                    consumer_lag_records.labels(topic=tp.topic, partition=str(tp.partition)).set(lag)
+            except Exception:
+                log.exception("lag_poll_failed", worker=worker_id)
 
 
 async def run_worker(worker_id: int) -> None:
@@ -222,7 +257,7 @@ async def run_worker(worker_id: int) -> None:
         fetch_loop(worker_id, consumer, queue, classifier, dlq_producer, security_producer, pg_pool, counters)
     )
     batch_task = asyncio.create_task(batcher.run(queue, consumer))
-    stats_task = asyncio.create_task(stats_loop(worker_id, queue, counters))
+    stats_task = asyncio.create_task(stats_loop(worker_id, queue, counters, consumer))
     stop_task = asyncio.create_task(stop_event.wait())
 
     try:

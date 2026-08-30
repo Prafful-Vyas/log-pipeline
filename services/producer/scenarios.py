@@ -10,7 +10,7 @@ from services.producer.generator import PROFILES, ScenarioState, build_injected_
 
 log = structlog.get_logger("producer.scenarios")
 
-SendFn = Callable[["object"], Awaitable[None]]  # accepts a LogEvent
+SendFn = Callable[["object", str], Awaitable[None]]  # accepts (LogEvent, level)
 
 # (name, mean_interval_s, duration_s)
 SCHEDULE = (
@@ -80,7 +80,7 @@ class ScenarioEngine:
         log.info("scenario_start", scenario="brute_force", ip=ip, total=total)
         interval = duration / max(total, 1)
         for _ in range(total):
-            evt = build_injected_event(
+            evt, level = build_injected_event(
                 profile,
                 level="ERROR",
                 endpoint="/login",
@@ -88,7 +88,7 @@ class ScenarioEngine:
                 message="auth failed",
                 status=401,
             )
-            await self._send(evt)
+            await self._send(evt, level)
             await asyncio.sleep(interval)
         log.info("scenario_end", scenario="brute_force", ip=ip)
 
@@ -102,14 +102,14 @@ class ScenarioEngine:
         )
         payload = random.choice(payloads)
         log.info("scenario_start", scenario="sqli_probe", service=profile.name)
-        evt = build_injected_event(
+        evt, level = build_injected_event(
             profile,
             level="WARN",
             endpoint=f"/search?q={payload}",
             message=f"suspicious query string: {payload}",
             status=400,
         )
-        await self._send(evt)
+        await self._send(evt, level)
 
     async def _scenario_cascade(self, duration: int) -> None:
         downstream = random.choice([p for p in self._names if p != "api-gateway"])

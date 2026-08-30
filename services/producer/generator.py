@@ -252,13 +252,13 @@ _RENDERERS = {
 }
 
 
-def build_event(profile: ServiceProfile, state: ScenarioState) -> LogEvent | None:
+def build_event(profile: ServiceProfile, state: ScenarioState) -> tuple[LogEvent, str] | None:
     if state.silenced:
         return None
     fmt = random.choice(profile.formats)
     fields = _fields_for(profile, state)
     raw = _RENDERERS[fmt](fields)
-    return LogEvent(
+    event = LogEvent(
         event_id=uuid4(),
         emitted_at=time.time(),
         service=profile.name,
@@ -266,6 +266,7 @@ def build_event(profile: ServiceProfile, state: ScenarioState) -> LogEvent | Non
         format=fmt,
         raw=raw,
     )
+    return event, fields["level"]
 
 
 def build_injected_event(
@@ -278,7 +279,7 @@ def build_injected_event(
     message: str | None = None,
     status: int = 401,
     fmt: str | None = None,
-) -> LogEvent:
+) -> tuple[LogEvent, str]:
     """Build a one-off event outside the normal weighted distribution, used by
     scenario injections (brute force, sqli probes) that need specific field values."""
     fields = _fields_for(profile, ScenarioState(), client_ip=client_ip)
@@ -289,7 +290,7 @@ def build_injected_event(
     fields["message"] = message or fields["message"]
     chosen_fmt = fmt or random.choice(profile.formats)
     raw = _RENDERERS[chosen_fmt](fields)
-    return LogEvent(
+    event = LogEvent(
         event_id=uuid4(),
         emitted_at=time.time(),
         service=profile.name,
@@ -297,3 +298,4 @@ def build_injected_event(
         format=chosen_fmt,
         raw=raw,
     )
+    return event, level

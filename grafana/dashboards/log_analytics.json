@@ -1,0 +1,86 @@
+{
+  "title": "Log Analytics",
+  "uid": "log-analytics",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "utc",
+  "tags": ["log-pipeline"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Error rate % by service",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "postgresql" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT bucket AS time, service, 100.0 * SUM(events) FILTER (WHERE level IN ('ERROR','FATAL')) / NULLIF(SUM(events),0) AS error_pct FROM logs_1m_agg WHERE $__timeFilter(bucket) GROUP BY 1,2 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "title": "Throughput (events/sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "postgresql" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT bucket AS time, SUM(events)/60.0 AS eps FROM logs_1m_agg WHERE $__timeFilter(bucket) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "title": "Top 10 error messages (drill-down)",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "postgres", "uid": "postgresql" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT left(message, 120) AS msg, count(*) AS n FROM logs WHERE $__timeFilter(ts) AND level IN ('ERROR','FATAL') GROUP BY 1 ORDER BY n DESC LIMIT 10"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Security alerts timeline",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "postgres", "uid": "postgresql" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT ts AS time, rule_id, severity, host(client_ip) AS ip FROM security_alerts WHERE $__timeFilter(ts) ORDER BY ts DESC LIMIT 200"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Latency p95 by service",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "postgres", "uid": "postgresql" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT bucket AS time, service, max(p95_lat) AS p95_lat FROM logs_1m_agg WHERE $__timeFilter(bucket) GROUP BY 1,2 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    }
+  ]
+}

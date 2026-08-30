@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: producer
+    static_configs:
+      - targets: ["producer:9101"]
+
+  - job_name: indexer
+    static_configs:
+      - targets: ["indexer:9102"]
+
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

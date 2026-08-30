@@ -8,6 +8,7 @@ import structlog
 
 from common.config import settings
 from common.logging import configure_logging
+from common.metrics import clear_multiprocess_dir, mark_worker_dead, serve_multiprocess_metrics
 
 log: structlog.stdlib.BoundLogger = configure_logging("indexer.supervisor")
 
@@ -70,6 +71,8 @@ class Supervisor:
                 if p.is_alive() or self._shutting_down:
                     continue
                 log.warning("worker_exited", worker=worker_id, exit_code=p.exitcode)
+                if p.pid is not None:
+                    mark_worker_dead(p.pid)
                 now = time.time()
                 times = [t for t in self._restart_times[worker_id] if now - t < self.RESTART_WINDOW_S]
                 times.append(now)
@@ -90,6 +93,8 @@ class Supervisor:
 
 def main() -> None:
     log.info("supervisor_starting", workers=settings.workers, write_strategy=settings.write_strategy)
+    clear_multiprocess_dir()
+    serve_multiprocess_metrics(settings.indexer_metrics_port)
     Supervisor(settings.workers).run_forever()
 
 

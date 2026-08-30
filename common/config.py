@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # Misc
     log_level: str = "INFO"
     metrics_port: int = 9101
+    indexer_metrics_port: int = 9102
 
 
 settings = Settings()

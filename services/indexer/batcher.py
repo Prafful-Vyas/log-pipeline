@@ -4,11 +4,17 @@ import asyncio
 import random
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 import structlog
 from aiokafka import TopicPartition
 from aiokafka.structs import OffsetAndMetadata
 
+from common.metrics import (
+    batch_flush_duration_seconds,
+    batch_size_records,
+    pipeline_e2e_latency_seconds,
+)
 from common.models import ParsedLog, SecurityAlert
 
 log = structlog.get_logger("indexer.batcher")
@@ -76,12 +82,19 @@ class Batcher:
             )
 
     async def _flush_with_retry(self, rows: list[ParsedLog], alerts: list[SecurityAlert]) -> None:
+        batch_size_records.observe(len(rows))
         attempt = 0
         while True:
+            start = time.monotonic()
             try:
                 await self._flush_fn(rows, alerts)
+                batch_flush_duration_seconds.labels(outcome="success").observe(time.monotonic() - start)
+                now = datetime.now(UTC)
+                for row in rows:
+                    pipeline_e2e_latency_seconds.observe(max(0.0, (now - row.emitted_at).total_seconds()))
                 return
             except Exception:
+                batch_flush_duration_seconds.labels(outcome="failure").observe(time.monotonic() - start)
                 attempt += 1
                 log.warning("flush_failed", attempt=attempt, batch_size=len(rows))
                 if attempt >= self.MAX_ATTEMPTS:
