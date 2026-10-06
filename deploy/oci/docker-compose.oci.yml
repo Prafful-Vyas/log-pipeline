@@ -1,0 +1,91 @@
+# Overrides for running the stack 24/7 on a single OCI VM.
+#   docker compose -f docker-compose.yml -f deploy/oci/docker-compose.oci.yml up -d
+#
+# - Nothing is published on a public interface: every port binds to 127.0.0.1 and the UIs
+#   are reached through an SSH tunnel. (Docker-published ports bypass the host firewall,
+#   so the VCN security list alone is not enough defence.)
+# - Every long-running service restarts after a crash or VM reboot.
+# - Grafana's admin password comes from .env instead of admin/admin.
+# - Sized for a 1 OCPU / 6 GB VM: Redpanda on one core with 1 GB, smaller Postgres buffers/WAL.
+# `!override` replaces the base file's port list instead of appending (Compose >= 2.24.4).
+
+services:
+  redpanda:
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --smp=1                 # one Ampere core; --smp=2 would refuse to start
+      - --memory=1G
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --advertise-pandaproxy-addr=redpanda:8082
+    ports: !override
+      - "127.0.0.1:9092:9092"
+      - "127.0.0.1:9644:9644"
+
+  redpanda-console:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:8080:8080"
+
+  postgres:
+    restart: unless-stopped
+    shm_size: "256m"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_wal_size=1GB          # caps WAL disk use on the 50 GB volume
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - synchronous_commit=off
+      - -c
+      - wal_compression=on
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - work_mem=16MB
+      - -c
+      - autovacuum_max_workers=2
+    ports: !override
+      - "127.0.0.1:5432:5432"
+
+  producer:
+    ports: !override
+      - "127.0.0.1:9101:9101"
+
+  indexer:
+    ports: !override
+      - "127.0.0.1:9102:9102"
+
+  postgres-exporter:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:9187:9187"
+
+  prometheus:
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    ports: !override
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports: !override
+      - "127.0.0.1:3000:3000"

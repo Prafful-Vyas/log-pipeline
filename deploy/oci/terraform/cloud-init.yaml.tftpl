@@ -1,0 +1,27 @@
+#cloud-config
+# First-boot setup: Docker, the app repo, and the stack. Progress: /var/log/cloud-init-output.log
+package_update: true
+packages:
+  - git
+  - ca-certificates
+  - curl
+  - openssl
+
+write_files:
+  - path: /opt/deploy/docker-compose.oci.yml
+    permissions: "0644"
+    encoding: b64
+    content: ${base64encode(compose_oci)}
+  - path: /opt/deploy/bootstrap.sh
+    permissions: "0755"
+    encoding: b64
+    content: ${base64encode(bootstrap_sh)}
+
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  - git clone ${repo_url} /opt/log-pipeline
+  - git -C /opt/log-pipeline checkout ${repo_ref}
+  - PRODUCER_RATE=${producer_rate} /opt/deploy/bootstrap.sh
+  - echo "log-pipeline bootstrap finished" | logger -t log-pipeline

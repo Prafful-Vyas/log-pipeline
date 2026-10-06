@@ -38,6 +38,13 @@ upkeep), and Prometheus/Grafana.
 
 Inspect topics/lag at http://localhost:8080 (Redpanda Console).
 
+## Cloud deployment (Oracle Cloud Always Free)
+
+`deploy/oci/` uses Terraform and cloud-init to run the stack 24/7 on a free Ampere A1 VM.
+Only SSH is reachable from outside, the UIs are accessed through an SSH tunnel, and the
+producer rate and retention are set to fit the free disk. See
+[deploy/oci/README.md](deploy/oci/README.md).
+
 ## Observability
 
 - Grafana: http://localhost:3000 (`admin`/`admin`) — two provisioned

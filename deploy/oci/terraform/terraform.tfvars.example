@@ -1,0 +1,6 @@
+# cp terraform.tfvars.example terraform.tfvars  (terraform.tfvars is gitignored)
+region           = "ap-hyderabad-1"            # your home region
+compartment_ocid = "ocid1.tenancy.oc1..xxxxx"  # tenancy OCID = root compartment
+admin_cidr       = "203.0.113.7/32"            # your public IP: curl -s https://ifconfig.me
+# ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+# availability_domain_index = 1                # if "Out of host capacity"
